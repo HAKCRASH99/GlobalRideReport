@@ -1,0 +1,500 @@
+    <?php
+    require_once 'config.php';
+
+    // Handle form submission
+    if ($_POST) {
+        try {
+            $name = $_POST['name'] ?? '';
+            $email = $_POST['email'] ?? '';
+            $vin_hin = $_POST['vin_hin'] ?? '';
+            $phone = $_POST['phone'] ?? '';
+            $zip_code = $_POST['zip_code'] ?? '';
+            $country = $_POST['country'] ?? '';
+            $package_type = $_POST['package_type'] ?? 'car';
+            $package_name = $_POST['package_name'] ?? '';
+            $payment_method = $_POST['payment_method'] ?? 'card';
+            
+            // Get base price
+            $base_price = 0;
+            if ($package_type === 'car') {
+                $base_price = $car_packages[$package_name] ?? 0;
+            } else {
+                $base_price = $boat_packages[$package_name] ?? 0;
+            }
+            
+            // Apply crypto discount
+            $final_price = $base_price;
+            if ($payment_method === 'crypto') {
+                $final_price = $base_price * 0.9; // 10% discount
+            }
+            
+            // Convert to selected currency
+            $currency = 'USD'; // Default
+            $country_currency_map = [
+                'United States' => 'USD',
+                'United Kingdom' => 'GBP',
+                'Canada' => 'CAD',
+                'Australia' => 'AUD',
+                'European Union' => 'EUR',
+                'Japan' => 'JPY'
+            ];
+            
+            $currency = $country_currency_map[$country] ?? 'USD';
+            $converted_price = convertPrice($final_price, $currency, $pdo);
+            $exchange_rate = getExchangeRate($currency, $pdo);
+            
+            // Store order in session for payment processing
+            $_SESSION['order_data'] = [
+                'name' => $name,
+                'email' => $email,
+                'vin_hin' => $vin_hin,
+                'phone' => $phone,
+                'zip_code' => $zip_code,
+                'country' => $country,
+                'package_type' => $package_type,
+                'package_name' => $package_name,
+                'base_amount' => $base_price,
+                'final_amount' => $final_price,
+                'converted_amount' => $converted_price,
+                'currency' => $currency,
+                'exchange_rate' => $exchange_rate,
+                'payment_method' => $payment_method,
+                'ip_address' => $_SERVER['REMOTE_ADDR']
+            ];
+            
+            // Redirect to payment processing
+            if ($payment_method === 'card') {
+                header('Location: process_stripe.php');
+                exit;
+            } else {
+                header('Location: process_crypto.php');
+                exit;
+            }
+            
+        } catch (Exception $e) {
+            $error = "Error: " . $e->getMessage();
+        }
+    }
+
+    // Get package type from URL or default to car
+    $package_type = $_GET['type'] ?? 'car';
+    $packages = $package_type === 'car' ? $car_packages : $boat_packages;
+    $page_title = $package_type === 'car' ? 'Vehicle Report' : 'Boat Report';
+    ?>
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Checkout - <?php echo $page_title; ?> - Global Ride Report</title>
+        <style>
+            * {
+                margin: 0;
+                padding: 0;
+                box-sizing: border-box;
+            }
+            
+            body {
+                font-family: Arial, sans-serif;
+                background-color: #f5f5f5;
+                padding: 20px;
+            }
+            
+            .container {
+                max-width: 800px;
+                margin: 0 auto;
+                background: white;
+                padding: 30px;
+                border-radius: 10px;
+                box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            }
+            
+            h1 {
+                text-align: center;
+                margin-bottom: 30px;
+                color: #333;
+            }
+            
+            .package-type-badge {
+                background: #007bff;
+                color: white;
+                padding: 5px 15px;
+                border-radius: 20px;
+                font-size: 14px;
+                display: inline-block;
+                margin-bottom: 10px;
+            }
+            
+            .form-group {
+                margin-bottom: 20px;
+            }
+            
+            label {
+                display: block;
+                margin-bottom: 5px;
+                font-weight: bold;
+                color: #555;
+            }
+            
+            input, select {
+                width: 100%;
+                padding: 10px;
+                border: 1px solid #ddd;
+                border-radius: 5px;
+                font-size: 16px;
+            }
+            
+            .package-options {
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+                gap: 10px;
+                margin-bottom: 20px;
+            }
+            
+            .package-option {
+                border: 2px solid #ddd;
+                padding: 15px;
+                border-radius: 5px;
+                text-align: center;
+                cursor: pointer;
+                transition: all 0.3s;
+            }
+            
+            .package-option.selected {
+                border-color: #007bff;
+                background-color: #f8f9fa;
+            }
+            
+            .package-option h3 {
+                margin-bottom: 5px;
+                color: #333;
+            }
+            
+            .package-option .price {
+                font-size: 18px;
+                font-weight: bold;
+                color: #007bff;
+            }
+            
+            .package-features {
+                font-size: 12px;
+                color: #666;
+                margin-top: 8px;
+                line-height: 1.4;
+            }
+            
+            .payment-methods {
+                margin: 20px 0;
+            }
+            
+            .payment-method {
+                margin-bottom: 10px;
+                padding: 15px;
+                border: 2px solid #ddd;
+                border-radius: 5px;
+                cursor: pointer;
+            }
+            
+            .payment-method.selected {
+                border-color: #007bff;
+                background-color: #f8f9fa;
+            }
+            
+            .crypto-discount {
+                color: #28a745;
+                font-weight: bold;
+                margin-left: 10px;
+            }
+            
+            .currency-display {
+                background: #f8f9fa;
+                padding: 10px;
+                border-radius: 5px;
+                margin-bottom: 20px;
+                text-align: center;
+                font-weight: bold;
+            }
+            
+            .btn {
+                background: #007bff;
+                color: white;
+                padding: 15px 30px;
+                border: none;
+                border-radius: 5px;
+                font-size: 18px;
+                cursor: pointer;
+                width: 100%;
+                transition: background 0.3s;
+            }
+            
+            .btn:hover {
+                background: #0056b3;
+            }
+            
+            .error {
+                color: #dc3545;
+                background: #f8d7da;
+                padding: 10px;
+                border-radius: 5px;
+                margin-bottom: 20px;
+            }
+            
+            .faq-section {
+                margin-top: 40px;
+                border-top: 1px solid #ddd;
+                padding-top: 20px;
+            }
+            
+            .faq-item {
+                margin-bottom: 15px;
+            }
+            
+            .faq-question {
+                font-weight: bold;
+                margin-bottom: 5px;
+                color: #333;
+            }
+            
+            .type-switcher {
+                text-align: center;
+                margin-bottom: 20px;
+            }
+            
+            .type-switcher a {
+                color: #007bff;
+                text-decoration: none;
+                margin: 0 10px;
+                padding: 5px 10px;
+                border-radius: 5px;
+            }
+            
+            .type-switcher a.active {
+                background: #007bff;
+                color: white;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>Checkout - <?php echo $page_title; ?></h1>
+            
+            <div class="type-switcher">
+                <a href="checkout.php?type=car" class="<?php echo $package_type === 'car' ? 'active' : ''; ?>">🚗 Vehicle Report</a>
+                <a href="checkout.php?type=boat" class="<?php echo $package_type === 'boat' ? 'active' : ''; ?>">🚤 Boat Report</a>
+            </div>
+            
+            <?php if (isset($error)): ?>
+                <div class="error"><?php echo htmlspecialchars($error); ?></div>
+            <?php endif; ?>
+            
+            <form id="checkout-form" method="POST">
+                <input type="hidden" name="package_type" id="package_type" value="<?php echo htmlspecialchars($package_type); ?>">
+                <input type="hidden" name="package_name" id="package_name">
+                
+                <div class="package-type-badge">
+                    <?php echo $package_type === 'car' ? '🚗 Vehicle Report' : '🚤 Boat Report'; ?>
+                </div>
+                
+                <div class="form-group">
+                    <label for="name">Full Name</label>
+                    <input type="text" id="name" name="name" required>
+                </div>
+                
+                <div class="form-group">
+                    <label for="email">Email</label>
+                    <input type="email" id="email" name="email" required>
+                </div>
+                
+                <div class="form-group">
+                    <label for="vin_hin">
+                        <?php echo $package_type === 'car' ? 'VIN Number' : 'HIN Number'; ?>
+                    </label>
+                    <input type="text" id="vin_hin" name="vin_hin" required 
+                        placeholder="<?php echo $package_type === 'car' ? 'Enter Vehicle VIN' : 'Enter Boat HIN'; ?>">
+                </div>
+                
+                <div class="form-group">
+                    <label for="phone">Phone</label>
+                    <input type="tel" id="phone" name="phone" required>
+                </div>
+                
+                <div class="form-group">
+                    <label for="zip_code">Zip Code</label>
+                    <input type="text" id="zip_code" name="zip_code" required>
+                </div>
+                
+                <div class="form-group">
+                    <label for="country">Country</label>
+                    <select id="country" name="country" required>
+                        <option value="">Select Country</option>
+                        <option value="United States">United States</option>
+                        <option value="United Kingdom">United Kingdom</option>
+                        <option value="Canada">Canada</option>
+                        <option value="Australia">Australia</option>
+                        <option value="European Union">European Union</option>
+                        <option value="Japan">Japan</option>
+                    </select>
+                </div>
+                
+                <div class="form-group">
+                    <label>Select Package</label>
+                    <div class="package-options">
+                        <?php foreach ($packages as $name => $price): ?>
+                            <div class="package-option" data-package="<?php echo htmlspecialchars($name); ?>" data-price="<?php echo $price; ?>">
+                                <h3><?php echo htmlspecialchars($name); ?></h3>
+                                <div class="price">$<?php echo $price; ?> USD</div>
+                                <div class="package-features">
+                                    <?php if ($package_type === 'car'): ?>
+                                        <?php echo getCarPackageFeatures($name); ?>
+                                    <?php else: ?>
+                                        <?php echo getBoatPackageFeatures($name); ?>
+                                    <?php endif; ?>
+                                </div>
+                            </div>
+                        <?php endforeach; ?>
+                    </div>
+                </div>
+                
+                <div class="currency-display" id="currency-display">
+                    Select a country and package to see converted price
+                </div>
+                
+                <div class="payment-methods">
+                    <label>Payment Method</label>
+                    <div class="payment-method" data-method="card">
+                        <input type="radio" name="payment_method" value="card" checked hidden>
+                        Credit/Debit Card
+                    </div>
+                    <div class="payment-method" data-method="crypto">
+                        <input type="radio" name="payment_method" value="crypto" hidden>
+                        Crypto Payment <span class="crypto-discount">(10% Discount)</span>
+                    </div>
+                </div>
+                
+                <button type="submit" class="btn">Proceed to Payment</button>
+            </form>
+            
+            <div class="faq-section">
+                <h2>Frequently Asked Questions</h2>
+                
+                <div class="faq-item">
+                    <div class="faq-question">How to pay with crypto?</div>
+                    <div class="faq-answer">After selecting crypto payment, you'll be redirected to our secure crypto payment processor where you can choose from various cryptocurrencies.</div>
+                </div>
+                
+                <div class="faq-item">
+                    <div class="faq-question">When will I receive my report?</div>
+                    <div class="faq-answer">Reports are typically delivered within 24-48 hours after payment confirmation.</div>
+                </div>
+                
+                <div class="faq-item">
+                    <div class="faq-question">What information is included in the report?</div>
+                    <div class="faq-answer">
+                        <?php if ($package_type === 'car'): ?>
+                            Our vehicle reports include accident history, ownership records, title information, service history, and more depending on the package selected.
+                        <?php else: ?>
+                            Our boat reports include accident history, ownership records, registration details, hull information, and more depending on the package selected.
+                        <?php endif; ?>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <script>
+            document.addEventListener('DOMContentLoaded', function() {
+                const packageOptions = document.querySelectorAll('.package-option');
+                const paymentMethods = document.querySelectorAll('.payment-method');
+                const countrySelect = document.getElementById('country');
+                const packageNameInput = document.getElementById('package_name');
+                const currencyDisplay = document.getElementById('currency-display');
+                
+                let selectedPackage = null;
+                let selectedCountry = '';
+                
+                // Package selection
+                packageOptions.forEach(option => {
+                    option.addEventListener('click', function() {
+                        packageOptions.forEach(opt => opt.classList.remove('selected'));
+                        this.classList.add('selected');
+                        selectedPackage = {
+                            name: this.dataset.package,
+                            price: parseFloat(this.dataset.price)
+                        };
+                        packageNameInput.value = selectedPackage.name;
+                        updateCurrencyDisplay();
+                    });
+                });
+                
+                // Payment method selection
+                paymentMethods.forEach(method => {
+                    method.addEventListener('click', function() {
+                        paymentMethods.forEach(m => m.classList.remove('selected'));
+                        this.classList.add('selected');
+                        const radio = this.querySelector('input[type="radio"]');
+                        radio.checked = true;
+                        updateCurrencyDisplay();
+                    });
+                });
+                
+                // Country change
+                countrySelect.addEventListener('change', function() {
+                    selectedCountry = this.value;
+                    updateCurrencyDisplay();
+                });
+                
+                // Update currency display
+                function updateCurrencyDisplay() {
+                    if (!selectedPackage || !selectedCountry) return;
+                    
+                    const paymentMethod = document.querySelector('input[name="payment_method"]:checked').value;
+                    let finalPrice = selectedPackage.price;
+                    let originalPrice = selectedPackage.price;
+                    
+                    if (paymentMethod === 'crypto') {
+                        finalPrice = selectedPackage.price * 0.9;
+                    }
+                    
+                    const currencyMap = {
+                        'United States': { code: 'USD', symbol: '$', rate: 1 },
+                        'United Kingdom': { code: 'GBP', symbol: '£', rate: 0.73 },
+                        'Canada': { code: 'CAD', symbol: 'C$', rate: 1.25 },
+                        'Australia': { code: 'AUD', symbol: 'A$', rate: 1.35 },
+                        'European Union': { code: 'EUR', symbol: '€', rate: 0.85 },
+                        'Japan': { code: 'JPY', symbol: '¥', rate: 110 }
+                    };
+                    
+                    const currencyInfo = currencyMap[selectedCountry] || currencyMap['United States'];
+                    const convertedPrice = (finalPrice * currencyInfo.rate).toFixed(2);
+                    const originalConverted = (originalPrice * currencyInfo.rate).toFixed(2);
+                    
+                    let displayText = `Total: ${currencyInfo.symbol}${convertedPrice} ${currencyInfo.code}`;
+                    
+                    if (paymentMethod === 'crypto') {
+                        displayText = `
+                            <div style="color: #28a745;">
+                                <strong>Crypto Total: ${currencyInfo.symbol}${convertedPrice} ${currencyInfo.code}</strong>
+                                <div style="font-size: 14px; color: #666;">
+                                    Original: ${currencyInfo.symbol}${originalConverted} ${currencyInfo.code} (10% discount applied)
+                                </div>
+                                <div style="font-size: 12px; color: #888; margin-top: 5px;">
+                                    Pay with Bitcoin, Ethereum, USDT, and 50+ other cryptocurrencies
+                                </div>
+                            </div>
+                        `;
+                    }
+                    
+                    currencyDisplay.innerHTML = displayText;
+                }
+                
+                // Form validation
+                document.getElementById('checkout-form').addEventListener('submit', function(e) {
+                    if (!selectedPackage) {
+                        e.preventDefault();
+                        alert('Please select a package');
+                        return;
+                    }
+                });
+            });
+        </script>
+    </body>
+    </html>
